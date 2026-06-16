@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="LookUp — instantly extract text from any image or screenshot using OCR" />
+    <meta name="description" content="LookUp — extract text from any image or screenshot. Press Ctrl+Shift+Space to scan word under cursor." />
     <title>LookUp — OCR Text Extractor</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -13,10 +13,21 @@
   </head>
 
   <body>
+    <!-- ── Word-detected popup ──────────────────────────────────────────── -->
+    <div id="word-popup" role="dialog" aria-label="Detected word">
+      <div class="word-popup-badge">Word detected</div>
+      <p id="word-popup-text" class="word-popup-word"></p>
+      <div class="word-popup-actions">
+        <button id="word-popup-copy" class="wp-btn">Copy</button>
+        <button id="word-popup-close" class="wp-btn wp-btn-ghost">Dismiss</button>
+      </div>
+    </div>
+
     <main class="container">
+      <!-- ── Header ─────────────────────────────────────────────────────── -->
       <header class="header">
         <div class="logo-wrap">
-          <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <svg class="logo-icon" viewBox="0 0 24 24" fill="none">
             <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
             <path d="M20 20L17 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             <path d="M8 11H14M11 8V14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -26,7 +37,20 @@
         <p class="tagline">Extract text from any image — instantly</p>
       </header>
 
+      <!-- ── Hotkey badge ───────────────────────────────────────────────── -->
+      <div class="hotkey-hint">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6 9h12M6 13h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Global hotkey
+        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd>
+        — scan word under cursor
+      </div>
+
+      <!-- ── Action buttons ─────────────────────────────────────────────── -->
       <section class="actions">
+        <button id="btn-word" class="btn btn-accent" title="Detect word currently under mouse cursor">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Word at Cursor
+        </button>
         <button id="btn-screenshot" class="btn btn-primary">
           <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>
           Scan Screen
@@ -38,8 +62,9 @@
         <input id="file-input" type="file" accept="image/*" style="display:none" />
       </section>
 
-      <div id="ocr-status" class="status">Ready — choose an action above</div>
+      <div id="ocr-status" class="status">Ready — press <strong>Ctrl+Shift+Space</strong> anywhere to detect a word</div>
 
+      <!-- ── Result panel ───────────────────────────────────────────────── -->
       <section class="result-wrap">
         <div class="result-header">
           <span class="result-label">Extracted Text</span>

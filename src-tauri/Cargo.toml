@@ -20,16 +20,21 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # OCR engine — rten pinned to 0.24 to match ocrs 0.12 internal dep
 ocrs = "0.12"
 rten = "0.24"
+rten-imageproc = "0.24"
 
 # Image processing
 image = "0.25"
 
 # Screen capture
 screenshots = "0.8"
+
+# Mouse cursor position
+mouse_position = "0.1"
 
