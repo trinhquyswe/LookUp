@@ -393,3 +393,65 @@ kbd {
 .hidden {
   display: none !important;
 }
+
+/* ─── OCR Switch Panel ───────────────────────────────────────────────────── */
+.ocr-switch-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-size: 0.82rem;
+  animation: fadeUp 0.5s 0.08s ease both;
+}
+
+.switch-label {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.status-badge.status-active {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.status-badge.status-active:hover {
+  background: rgba(52, 211, 153, 0.25);
+  box-shadow: 0 4px 12px rgba(52, 211, 153, 0.3);
+}
+
+.status-badge.status-inactive {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--error);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+.status-badge.status-inactive:hover {
+  background: rgba(248, 113, 113, 0.25);
+  box-shadow: 0 4px 12px rgba(248, 113, 113, 0.3);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}

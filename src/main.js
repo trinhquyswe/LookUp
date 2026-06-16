@@ -1,3 +1,4 @@
+const { listen } = window.__TAURI__.event;
 const { invoke } = window.__TAURI__.core;
 
 // ── Status helper ─────────────────────────────────────────────────────────────
@@ -9,6 +10,44 @@ function setStatus(msg, type = "") {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", async () => {
+  // ── OCR Switch Configuration ───────────────────────────────────────────────
+  const ocrToggleBtn = document.getElementById("ocr-status-toggle");
+  const ocrStatusText = document.getElementById("ocr-status-text");
+
+  function updateOcrStatusUI(enabled) {
+    if (enabled) {
+      ocrToggleBtn.className = "status-badge status-active";
+      ocrStatusText.textContent = "ENABLED";
+      setStatus("OCR function is active. Press <strong>middle mouse button</strong> to lookup word.");
+    } else {
+      ocrToggleBtn.className = "status-badge status-inactive";
+      ocrStatusText.textContent = "DISABLED";
+      setStatus("OCR function is inactive. Press your hotkey to enable it.");
+    }
+  }
+
+  // Fetch initial OCR status
+  try {
+    const ocrEnabled = await invoke("get_ocr_enabled");
+    updateOcrStatusUI(ocrEnabled);
+  } catch (err) {
+    console.error("Failed to load OCR status:", err);
+  }
+
+  // Listen for toggles from backend hotkey
+  await listen("ocr-status-changed", (event) => {
+    updateOcrStatusUI(event.payload);
+  });
+
+  // Toggle OCR status on click
+  ocrToggleBtn.addEventListener("click", async () => {
+    try {
+      const newState = await invoke("toggle_ocr_enabled");
+      updateOcrStatusUI(newState);
+    } catch (err) {
+      console.error("Failed to toggle OCR status:", err);
+    }
+  });
   // ── Hotkey recorder configuration ──────────────────────────────────────────
   const hotkeyInput = document.getElementById("hotkey-input");
   const saveBtn = document.getElementById("btn-save-hotkey");

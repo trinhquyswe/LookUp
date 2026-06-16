@@ -18,6 +18,7 @@ pub fn run() {
         .manage(ocr::OcrState(std::sync::Mutex::new(None)))
         .manage(dictionary::DictionaryService::new())
         .manage(commands::HotkeyState(std::sync::Mutex::new("Ctrl+Shift+Space".to_string())))
+        .manage(commands::OcrEnabledState(std::sync::atomic::AtomicBool::new(true)))
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -27,25 +28,13 @@ pub fn run() {
                         let current_hotkey = hotkey_state.0.lock().unwrap().clone();
                         if let Ok(configured_shortcut) = current_hotkey.parse::<Shortcut>() {
                             if shortcut == &configured_shortcut {
-                                let app = app.clone();
-                                std::thread::spawn(move || {
-                                    // Capture cursor position BEFORE slow OCR starts
-                                    let (cx, cy) = match ocr::get_cursor_pos() {
-                                        Ok(p) => p,
-                                        Err(e) => {
-                                            eprintln!("Cursor error: {e}");
-                                            return;
-                                        }
-                                    };
-
-                                    let state = app.state::<ocr::OcrState>();
-                                    let word = ocr::with_engine(&state, |engine| {
-                                        ocr::detect_word_at(engine, cx, cy)
-                                    })
-                                    .unwrap_or_default();
-
-                                    popup::show_popup(&app, word, cx, cy);
-                                });
+                                use tauri::Emitter;
+                                let enabled_state = app.state::<commands::OcrEnabledState>();
+                                let new_state = !enabled_state.0.load(std::sync::atomic::Ordering::Relaxed);
+                                enabled_state.0.store(new_state, std::sync::atomic::Ordering::Relaxed);
+                                
+                                // Emit status change to update frontend UI
+                                let _ = app.emit("ocr-status-changed", new_state);
                             }
                         }
                     }
@@ -63,6 +52,41 @@ pub fn run() {
             // Store active hotkey in HotkeyState
             *app.state::<commands::HotkeyState>().0.lock().unwrap() = config.hotkey;
 
+            // ── Register global mouse listener for middle click ────────────
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let callback = move |event: rdev::Event| {
+                    if let rdev::EventType::ButtonPress(rdev::Button::Middle) = event.event_type {
+                        let enabled_state = app_handle.state::<commands::OcrEnabledState>();
+                        if enabled_state.0.load(std::sync::atomic::Ordering::Relaxed) {
+                            let app_handle = app_handle.clone();
+                            std::thread::spawn(move || {
+                                // Capture cursor position
+                                let (cx, cy) = match ocr::get_cursor_pos() {
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        eprintln!("Cursor error: {e}");
+                                        return;
+                                    }
+                                };
+
+                                let state = app_handle.state::<ocr::OcrState>();
+                                let word = ocr::with_engine(&state, |engine| {
+                                    ocr::detect_word_at(engine, cx, cy)
+                                })
+                                .unwrap_or_default();
+
+                                popup::show_popup(&app_handle, word, cx, cy);
+                            });
+                        }
+                    }
+                };
+
+                if let Err(error) = rdev::listen(callback) {
+                    eprintln!("rdev listen error: {:?}", error);
+                }
+            });
+
             // ── System tray ────────────────────────────────────────────────
             let show_item =
                 MenuItem::with_id(app, "show", "Open LookUp", true, None::<&str>)?;
@@ -72,7 +96,7 @@ pub fn run() {
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("LookUp — Hotkey to detect word under cursor")
+                .tooltip("LookUp — Hotkey to toggle OCR word lookup")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
@@ -104,6 +128,8 @@ pub fn run() {
             commands::lookup_word,
             commands::get_hotkey,
             commands::set_hotkey,
+            commands::get_ocr_enabled,
+            commands::toggle_ocr_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5,6 +5,27 @@ use ocrs::ImageSource;
 use screenshots::Screen;
 use std::str::FromStr;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+use tauri::Emitter;
+
+pub struct OcrEnabledState(pub std::sync::atomic::AtomicBool);
+
+#[tauri::command]
+pub fn get_ocr_enabled(state: tauri::State<OcrEnabledState>) -> bool {
+    state.0.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[tauri::command]
+pub fn toggle_ocr_enabled(
+    app: tauri::AppHandle,
+    state: tauri::State<OcrEnabledState>,
+) -> bool {
+    let new_state = !state.0.load(std::sync::atomic::Ordering::Relaxed);
+    state.0.store(new_state, std::sync::atomic::Ordering::Relaxed);
+    
+    // Emit event to notify windows
+    let _ = app.emit("ocr-status-changed", new_state);
+    new_state
+}
 
 pub struct HotkeyState(pub std::sync::Mutex<String>);
 
