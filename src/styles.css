@@ -298,3 +298,98 @@ kbd {
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 999px; }
+
+/* ─── Settings Panel ─────────────────────────────────────────────────────── */
+.settings-panel {
+  width: 100%;
+  max-width: 500px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  box-shadow: var(--shadow);
+  animation: fadeUp 0.5s 0.05s ease both;
+}
+
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.settings-label svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent2);
+}
+
+.hotkey-recorder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#hotkey-input {
+  width: 180px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #c4b5fd;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+#hotkey-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(108, 99, 255, 0.25);
+  background: rgba(108, 99, 255, 0.05);
+  color: #fff;
+}
+
+.btn-save-hotkey, .btn-cancel-hotkey {
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+
+.btn-save-hotkey {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-save-hotkey:hover {
+  background: var(--accent2);
+}
+
+.btn-cancel-hotkey {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.btn-cancel-hotkey:hover {
+  color: var(--text);
+  border-color: rgba(255,255,255,0.15);
+}
+
+.hidden {
+  display: none !important;
+}

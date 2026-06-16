@@ -1,7 +1,48 @@
 use crate::ocr::{self, OcrState};
 use crate::dictionary::{DictionaryService, LookupResponse};
+use crate::config::{self, AppConfig};
 use ocrs::ImageSource;
 use screenshots::Screen;
+use std::str::FromStr;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+
+pub struct HotkeyState(pub std::sync::Mutex<String>);
+
+#[tauri::command]
+pub fn get_hotkey(hotkey_state: tauri::State<HotkeyState>) -> String {
+    hotkey_state.0.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn set_hotkey(
+    app: tauri::AppHandle,
+    new_hotkey: String,
+    hotkey_state: tauri::State<HotkeyState>,
+) -> Result<(), String> {
+    let new_shortcut = Shortcut::from_str(&new_hotkey)
+        .map_err(|e| format!("Invalid shortcut format: {e}"))?;
+
+    let mut guard = hotkey_state.0.lock().unwrap();
+    let old_hotkey = guard.clone();
+
+    let global_shortcut = app.global_shortcut();
+
+    // Unregister old hotkey if it was registered
+    if let Ok(old_shortcut) = Shortcut::from_str(&old_hotkey) {
+        let _ = global_shortcut.unregister(old_shortcut);
+    }
+
+    // Register new hotkey
+    global_shortcut.register(new_shortcut)
+        .map_err(|e| format!("Failed to register new shortcut: {e}. Please ensure it is not already in use."))?;
+
+    // Update state and save config
+    *guard = new_hotkey.clone();
+    let config = AppConfig { hotkey: new_hotkey };
+    config::save_config(&app, &config)?;
+
+    Ok(())
+}
 
 #[tauri::command]
 pub fn ocr_from_file(path: String, state: tauri::State<OcrState>) -> Result<String, String> {
