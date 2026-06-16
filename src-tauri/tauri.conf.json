@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
+  "productName": "LookUp",
   "version": "0.1.0",
-  "identifier": "com.usopp.tauri-app",
+  "identifier": "com.usopp.lookup",
   "build": {
     "frontendDist": "../src"
   },
@@ -10,13 +10,37 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "tauri-app",
+        "label": "main",
+        "title": "LookUp",
+        "url": "index.html",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "visible": false,
+        "skipTaskbar": false
+      },
+      {
+        "label": "popup",
+        "title": "LookUp",
+        "url": "popup.html",
+        "width": 320,
+        "height": 160,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false
       }
     ],
     "security": {
       "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/32x32.png",
+      "iconAsTemplate": false,
+      "tooltip": "LookUp — Ctrl+Shift+Space to detect word"
     }
   },
   "bundle": {
