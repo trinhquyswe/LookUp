@@ -203,6 +203,213 @@ fn ocr_word_at_cursor(state: tauri::State<OcrState>) -> Result<String, String> {
     with_engine(&state, |engine| detect_word_at(engine, cx, cy))
 }
 
+// ── Dictionary structures & lookup ───────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct Meaning {
+    pub pos: String,
+    pub definition: String,
+    pub example: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct LookupResponse {
+    pub word: String,
+    pub pronunciation: Option<String>,
+    pub audio: Option<String>,
+    pub vi_meanings: Vec<Meaning>,
+    pub en_meanings: Vec<Meaning>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct ViMeaningsNode {
+    definition: String,
+    pos: Option<String>,
+    example: Option<String>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct ViPronunciationNode {
+    ipa: Option<String>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct ViResultNode {
+    meanings: Option<Vec<ViMeaningsNode>>,
+    pronunciations: Option<Vec<ViPronunciationNode>>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct ViApiResponse {
+    exists: bool,
+    results: Option<Vec<ViResultNode>>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct EnPhoneticNode {
+    text: Option<String>,
+    audio: Option<String>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct EnDefinitionNode {
+    definition: String,
+    example: Option<String>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct EnMeaningNode {
+    #[serde(rename = "partOfSpeech")]
+    part_of_speech: Option<String>,
+    definitions: Option<Vec<EnDefinitionNode>>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct EnApiEntry {
+    phonetics: Option<Vec<EnPhoneticNode>>,
+    meanings: Option<Vec<EnMeaningNode>>,
+}
+
+fn fetch_vi_meanings(word: &str) -> (Option<String>, Vec<Meaning>) {
+    let mut url = match reqwest::Url::parse("https://dict.minhqnd.com/api/v1/lookup") {
+        Ok(u) => u,
+        Err(_) => return (None, Vec::new()),
+    };
+    url.query_pairs_mut()
+        .append_pair("word", word)
+        .append_pair("lang", "en")
+        .append_pair("def_lang", "vi");
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .unwrap();
+
+    let response = match client.get(url).send() {
+        Ok(r) => r,
+        Err(_) => return (None, Vec::new()),
+    };
+
+    let api_res: ViApiResponse = match response.json() {
+        Ok(res) => res,
+        Err(_) => return (None, Vec::new()),
+    };
+
+    if !api_res.exists {
+        return (None, Vec::new());
+    }
+
+    let mut pronunciation = None;
+    let mut meanings = Vec::new();
+
+    if let Some(results) = api_res.results {
+        for res in results {
+            if let Some(ref prons) = res.pronunciations {
+                for pron in prons {
+                    if let Some(ref ipa) = pron.ipa {
+                        if pronunciation.is_none() {
+                            pronunciation = Some(ipa.clone());
+                        }
+                    }
+                }
+            }
+            if let Some(ref ms) = res.meanings {
+                for m in ms {
+                    meanings.push(Meaning {
+                        pos: m.pos.clone().unwrap_or_else(|| "Thán từ".to_string()),
+                        definition: m.definition.clone(),
+                        example: m.example.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    (pronunciation, meanings)
+}
+
+fn fetch_en_meanings(word: &str) -> (Option<String>, Option<String>, Vec<Meaning>) {
+    let word_encoded = match reqwest::Url::parse(&format!("http://x/{}", word)) {
+        Ok(u) => u.path()[1..].to_string(),
+        Err(_) => word.to_string(),
+    };
+    let url_str = format!("https://api.dictionaryapi.dev/api/v2/entries/en/{}", word_encoded);
+    
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .unwrap();
+
+    let response = match client.get(&url_str).send() {
+        Ok(r) => r,
+        Err(_) => return (None, None, Vec::new()),
+    };
+
+    let entries: Vec<EnApiEntry> = match response.json() {
+        Ok(e) => e,
+        Err(_) => return (None, None, Vec::new()),
+    };
+
+    let mut pronunciation = None;
+    let mut audio = None;
+    let mut meanings = Vec::new();
+
+    for entry in entries {
+        if let Some(ref phons) = entry.phonetics {
+            for phon in phons {
+                if pronunciation.is_none() && phon.text.is_some() {
+                    pronunciation = phon.text.clone();
+                }
+                if audio.is_none() && phon.audio.is_some() {
+                    let aud = phon.audio.clone().unwrap();
+                    if !aud.is_empty() {
+                        audio = Some(aud);
+                    }
+                }
+            }
+        }
+        if let Some(ref ms) = entry.meanings {
+            for m in ms {
+                let pos = m.part_of_speech.clone().unwrap_or_else(|| "definition".to_string());
+                if let Some(ref defs) = m.definitions {
+                    for def in defs {
+                        meanings.push(Meaning {
+                            pos: pos.clone(),
+                            definition: def.definition.clone(),
+                            example: def.example.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    (pronunciation, audio, meanings)
+}
+
+#[tauri::command]
+fn lookup_word(word: String) -> Result<LookupResponse, String> {
+    let word_trimmed = word.trim().to_lowercase();
+    if word_trimmed.is_empty() {
+        return Err("Word is empty".to_string());
+    }
+
+    // Run both queries.
+    let (vi_pron, vi_meanings) = fetch_vi_meanings(&word_trimmed);
+    let (en_pron, en_audio, en_meanings) = fetch_en_meanings(&word_trimmed);
+
+    // Prefer VI pronunciation, fallback to EN pronunciation
+    let pronunciation = vi_pron.or(en_pron);
+
+    Ok(LookupResponse {
+        word: word_trimmed,
+        pronunciation,
+        audio: en_audio,
+        vi_meanings,
+        en_meanings,
+    })
+}
+
 // ── Popup positioner ──────────────────────────────────────────────────────────
 
 /// Show the popup window near the cursor with the detected word.
@@ -212,9 +419,9 @@ fn show_popup(app: &tauri::AppHandle, word: String, cursor_x: i32, cursor_y: i32
     };
 
     // Position the popup above and centred on the cursor.
-    // popup is 320×160 px
-    let px = (cursor_x - 160).max(8);
-    let py = (cursor_y - 190).max(8);
+    // popup is 360×260 px
+    let px = (cursor_x - 180).max(8);
+    let py = (cursor_y - 290).max(8);
 
     let _ = popup.set_position(tauri::PhysicalPosition::new(px, py));
     let _ = popup.emit("show-word", &word);
@@ -305,6 +512,7 @@ pub fn run() {
             ocr_from_file,
             ocr_screenshot,
             ocr_word_at_cursor,
+            lookup_word,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
