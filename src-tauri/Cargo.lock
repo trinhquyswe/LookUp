@@ -2532,6 +2532,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
+name = "lookup"
+version = "0.1.0"
+dependencies = [
+ "image 0.25.10",
+ "mouse_position",
+ "ocrs",
+ "reqwest 0.12.28",
+ "rten",
+ "rten-imageproc",
+ "screenshots",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-opener",
+]
+
+[[package]]
 name = "loop9"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4649,25 +4668,6 @@ dependencies = [
  "webview2-com",
  "window-vibrancy",
  "windows 0.61.3",
-]
-
-[[package]]
-name = "tauri-app"
-version = "0.1.0"
-dependencies = [
- "image 0.25.10",
- "mouse_position",
- "ocrs",
- "reqwest 0.12.28",
- "rten",
- "rten-imageproc",
- "screenshots",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-opener",
 ]
 
 [[package]]
