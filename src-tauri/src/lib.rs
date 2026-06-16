@@ -115,19 +115,41 @@ fn detect_word_at(engine: &OcrEngine, cursor_x: i32, cursor_y: i32) -> Result<St
         None => return Ok(String::new()),
     };
 
-    let single_line = vec![vec![*word_rect]];
-    let recognized = engine
-        .recognize_text(&input, &single_line)
-        .map_err(|e| format!("recognize_text failed: {e}"))?;
+    // ── Crop to the exact word bounding box ───────────────────────────────────
+    // Feeding only the word's own pixels to the model makes it physically
+    // impossible for neighbouring text to appear in the result.
+    let br = word_rect.bounding_rect();
+    const CROP_PAD: i32 = 4;
+    let cx1 = (br.left()   as i32 - CROP_PAD).max(0) as u32;
+    let cy1 = (br.top()    as i32 - CROP_PAD).max(0) as u32;
+    let cx2 = (br.right()  as i32 + CROP_PAD).min(capture.width()  as i32) as u32;
+    let cy2 = (br.bottom() as i32 + CROP_PAD).min(capture.height() as i32) as u32;
+    let cw = cx2.saturating_sub(cx1).max(1);
+    let ch = cy2.saturating_sub(cy1).max(1);
 
-    Ok(recognized
-        .into_iter()
-        .flatten()
-        .map(|t| t.to_string())
-        .collect::<Vec<_>>()
-        .join("")
-        .trim()
-        .to_string())
+    // Convert RGBA capture -> RGB, then crop to the word rect
+    let img_rgba = image::RgbaImage::from_raw(
+        capture.width(),
+        capture.height(),
+        capture.as_raw().to_vec(),
+    )
+    .ok_or_else(|| "Failed to wrap capture as RgbaImage".to_string())?;
+    let img_rgb = image::DynamicImage::ImageRgba8(img_rgba).into_rgb8();
+    let cropped = image::imageops::crop_imm(&img_rgb, cx1, cy1, cw, ch).to_image();
+
+    // OCR on the isolated crop
+    let crop_src =
+        ImageSource::from_bytes(cropped.as_raw(), (cropped.width(), cropped.height()))
+            .map_err(|e| format!("Crop ImageSource error: {e}"))?;
+    let crop_in = engine
+        .prepare_input(crop_src)
+        .map_err(|e| format!("Crop prepare_input failed: {e}"))?;
+    let raw = engine
+        .get_text(&crop_in)
+        .map_err(|e| format!("Crop get_text failed: {e}"))?;
+
+    // Take only the first whitespace token as an extra safeguard
+    Ok(raw.split_whitespace().next().unwrap_or("").to_string())
 }
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
