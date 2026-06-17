@@ -17,7 +17,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(ocr::OcrState(std::sync::Mutex::new(None)))
         .manage(dictionary::DictionaryService::new())
-        .manage(commands::HotkeyState(std::sync::Mutex::new("Ctrl+Shift+Space".to_string())))
+        .manage(commands::HotkeyState(std::sync::Mutex::new("None".to_string())))
         .manage(commands::OcrEnabledState(std::sync::atomic::AtomicBool::new(true)))
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -26,15 +26,17 @@ pub fn run() {
                     if event.state() == ShortcutState::Pressed {
                         let hotkey_state = app.state::<commands::HotkeyState>();
                         let current_hotkey = hotkey_state.0.lock().unwrap().clone();
-                        if let Ok(configured_shortcut) = current_hotkey.parse::<Shortcut>() {
-                            if shortcut == &configured_shortcut {
-                                use tauri::Emitter;
-                                let enabled_state = app.state::<commands::OcrEnabledState>();
-                                let new_state = !enabled_state.0.load(std::sync::atomic::Ordering::Relaxed);
-                                enabled_state.0.store(new_state, std::sync::atomic::Ordering::Relaxed);
-                                
-                                // Emit status change to update frontend UI
-                                let _ = app.emit("ocr-status-changed", new_state);
+                        if current_hotkey != "None" && !current_hotkey.is_empty() {
+                            if let Ok(configured_shortcut) = current_hotkey.parse::<Shortcut>() {
+                                if shortcut == &configured_shortcut {
+                                    use tauri::Emitter;
+                                    let enabled_state = app.state::<commands::OcrEnabledState>();
+                                    let new_state = !enabled_state.0.load(std::sync::atomic::Ordering::Relaxed);
+                                    enabled_state.0.store(new_state, std::sync::atomic::Ordering::Relaxed);
+                                    
+                                    // Emit status change to update frontend UI
+                                    let _ = app.emit("ocr-status-changed", new_state);
+                                }
                             }
                         }
                     }
@@ -44,9 +46,11 @@ pub fn run() {
         .setup(|app| {
             // ── Register global hotkey from config ─────────────────────────
             let config = config::load_config(app.handle());
-            if let Ok(shortcut) = config.hotkey.parse::<Shortcut>() {
-                if let Err(e) = app.global_shortcut().register(shortcut) {
-                    eprintln!("Failed to register hotkey {}: {}", config.hotkey, e);
+            if config.hotkey != "None" && !config.hotkey.is_empty() {
+                if let Ok(shortcut) = config.hotkey.parse::<Shortcut>() {
+                    if let Err(e) = app.global_shortcut().register(shortcut) {
+                        eprintln!("Failed to register hotkey {}: {}", config.hotkey, e);
+                    }
                 }
             }
             // Store active hotkey in HotkeyState

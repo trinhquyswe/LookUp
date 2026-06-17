@@ -10,44 +10,6 @@ function setStatus(msg, type = "") {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", async () => {
-  // ── OCR Switch Configuration ───────────────────────────────────────────────
-  const ocrToggleBtn = document.getElementById("ocr-status-toggle");
-  const ocrStatusText = document.getElementById("ocr-status-text");
-
-  function updateOcrStatusUI(enabled) {
-    if (enabled) {
-      ocrToggleBtn.className = "status-badge status-active";
-      ocrStatusText.textContent = "ENABLED";
-      setStatus("OCR function is active. Press <strong>middle mouse button</strong> to lookup word.");
-    } else {
-      ocrToggleBtn.className = "status-badge status-inactive";
-      ocrStatusText.textContent = "DISABLED";
-      setStatus("OCR function is inactive. Press your hotkey to enable it.");
-    }
-  }
-
-  // Fetch initial OCR status
-  try {
-    const ocrEnabled = await invoke("get_ocr_enabled");
-    updateOcrStatusUI(ocrEnabled);
-  } catch (err) {
-    console.error("Failed to load OCR status:", err);
-  }
-
-  // Listen for toggles from backend hotkey
-  await listen("ocr-status-changed", (event) => {
-    updateOcrStatusUI(event.payload);
-  });
-
-  // Toggle OCR status on click
-  ocrToggleBtn.addEventListener("click", async () => {
-    try {
-      const newState = await invoke("toggle_ocr_enabled");
-      updateOcrStatusUI(newState);
-    } catch (err) {
-      console.error("Failed to toggle OCR status:", err);
-    }
-  });
   // ── Hotkey recorder configuration ──────────────────────────────────────────
   const hotkeyInput = document.getElementById("hotkey-input");
   const saveBtn = document.getElementById("btn-save-hotkey");
@@ -59,7 +21,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Fetch initial hotkey
   try {
     const currentHotkey = await invoke("get_hotkey");
-    hotkeyInput.value = currentHotkey;
+    hotkeyInput.value = currentHotkey || "None";
   } catch (err) {
     console.error("Failed to load hotkey:", err);
   }
@@ -124,6 +86,18 @@ window.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
+    if (newHotkey !== "None") {
+      const parts = newHotkey.split("+");
+      const modifiers = ["Ctrl", "Shift", "Alt", "Super"];
+      if (parts.length !== 2 || !modifiers.includes(parts[0]) || modifiers.includes(parts[1])) {
+        setStatus("Error: Hotkey must be a combination of exactly 2 keys (1 modifier + 1 key, e.g., Ctrl+Space)", "error");
+        hotkeyInput.value = originalHotkey;
+        saveBtn.classList.add("hidden");
+        cancelBtn.classList.add("hidden");
+        return;
+      }
+    }
+
     setStatus("Saving hotkey...");
     try {
       await invoke("set_hotkey", { newHotkey });
@@ -143,60 +117,5 @@ window.addEventListener("DOMContentLoaded", async () => {
     hotkeyInput.value = originalHotkey;
     saveBtn.classList.add("hidden");
     cancelBtn.classList.add("hidden");
-  });
-
-  // ── Word at Cursor button ───────────────────────────────────────────────────
-  document.getElementById("btn-word").addEventListener("click", async () => {
-    setStatus("Scanning word under mouse…");
-    const resultEl = document.getElementById("ocr-result");
-    resultEl.textContent = "";
-    try {
-      const text = await invoke("ocr_word_at_cursor");
-      resultEl.textContent = text || "(no word found under cursor)";
-      setStatus("Done ✓");
-    } catch (err) {
-      setStatus("Error: " + err, "error");
-    }
-  });
-
-  // ── Scan Screen button ───────────────────────────────────────────────────────
-  document.getElementById("btn-screenshot").addEventListener("click", async () => {
-    setStatus("Scanning screen…");
-    const resultEl = document.getElementById("ocr-result");
-    resultEl.textContent = "";
-    try {
-      const text = await invoke("ocr_screenshot");
-      resultEl.textContent = text || "(no text detected)";
-      setStatus("Done ✓");
-    } catch (err) {
-      setStatus("Error: " + err, "error");
-    }
-  });
-
-  // ── Open Image button ────────────────────────────────────────────────────────
-  const fileInput = document.getElementById("file-input");
-  document.getElementById("btn-file").addEventListener("click", () => fileInput.click());
-
-  fileInput.addEventListener("change", async () => {
-    const file = fileInput.files[0];
-    if (!file) return;
-    setStatus(`Reading ${file.name}…`);
-    const resultEl = document.getElementById("ocr-result");
-    resultEl.textContent = "";
-    try {
-      const text = await invoke("ocr_from_file", { path: file.path });
-      resultEl.textContent = text || "(no text detected)";
-      setStatus("Done ✓");
-    } catch (err) {
-      setStatus("Error: " + err, "error");
-    }
-    fileInput.value = "";
-  });
-
-  // ── Copy button ──────────────────────────────────────────────────────────────
-  document.getElementById("btn-copy").addEventListener("click", () => {
-    const text = document.getElementById("ocr-result").textContent;
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => setStatus("Copied ✓"));
   });
 });

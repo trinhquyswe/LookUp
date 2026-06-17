@@ -40,7 +40,7 @@
     "trayIcon": {
       "iconPath": "icons/32x32.png",
       "iconAsTemplate": false,
-      "tooltip": "LookUp — Ctrl+Shift+Space to detect word"
+      "tooltip": "LookUp — Instantly scan word under cursor"
     }
   },
   "bundle": {

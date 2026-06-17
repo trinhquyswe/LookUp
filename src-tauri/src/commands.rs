@@ -40,20 +40,39 @@ pub fn set_hotkey(
     new_hotkey: String,
     hotkey_state: tauri::State<HotkeyState>,
 ) -> Result<(), String> {
-    let new_shortcut = Shortcut::from_str(&new_hotkey)
-        .map_err(|e| format!("Invalid shortcut format: {e}"))?;
-
+    let global_shortcut = app.global_shortcut();
     let mut guard = hotkey_state.0.lock().unwrap();
     let old_hotkey = guard.clone();
 
-    let global_shortcut = app.global_shortcut();
-
     // Unregister old hotkey if it was registered
-    if let Ok(old_shortcut) = Shortcut::from_str(&old_hotkey) {
-        let _ = global_shortcut.unregister(old_shortcut);
+    if old_hotkey != "None" && !old_hotkey.is_empty() {
+        if let Ok(old_shortcut) = Shortcut::from_str(&old_hotkey) {
+            let _ = global_shortcut.unregister(old_shortcut);
+        }
+    }
+
+    if new_hotkey == "None" || new_hotkey.is_empty() {
+        // Just clear the hotkey
+        *guard = "None".to_string();
+        let config = AppConfig { hotkey: "None".to_string() };
+        config::save_config(&app, &config)?;
+        return Ok(());
+    }
+
+    // Validate 2-key combination: exactly 1 modifier and 1 primary key
+    let parts: Vec<&str> = new_hotkey.split('+').collect();
+    if parts.len() != 2 {
+        return Err("Hotkey must be a combination of exactly 2 keys (e.g., Ctrl+Space)".to_string());
+    }
+    let modifiers = vec!["Ctrl", "Shift", "Alt", "Super"];
+    if !modifiers.contains(&parts[0]) || modifiers.contains(&parts[1]) {
+        return Err("Hotkey must be 1 modifier + 1 key (e.g., Ctrl+Space)".to_string());
     }
 
     // Register new hotkey
+    let new_shortcut = Shortcut::from_str(&new_hotkey)
+        .map_err(|e| format!("Invalid shortcut format: {e}"))?;
+
     global_shortcut.register(new_shortcut)
         .map_err(|e| format!("Failed to register new shortcut: {e}. Please ensure it is not already in use."))?;
 
