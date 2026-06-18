@@ -22,6 +22,8 @@ add_executable(LookUp WIN32
     src/D2DRenderer.cpp
     src/MainWindow.h
     src/MainWindow.cpp
+    src/PopupWindow.h
+    src/PopupWindow.cpp
 )
 
 # Include directories
@@ -39,6 +41,7 @@ target_link_libraries(LookUp PRIVATE
     user32
     gdi32
     ole32
+    dwmapi
 )
 
 # Copy Assets to output directory post-build

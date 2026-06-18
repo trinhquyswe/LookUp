@@ -189,6 +189,9 @@ LRESULT MainWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
 
             SetupTrayIcon();
             UpdateRegisteredHotkey();
+            
+            // Initialize popup window
+            m_popupWindow.Create(GetModuleHandle(nullptr), m_hwnd);
             return 0;
         }
         case WM_SIZE: {
@@ -307,7 +310,11 @@ LRESULT MainWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_HOTKEY: {
             if (wParam == 1) {
-                ShowTrayNotification(L"LookUp Triggered", L"Hotkey recognized. OCR screenshot pipeline will be initiated here.");
+                m_popupWindow.Show(
+                    L"Aesthetic",
+                    L"/esˈθet.ɪk/",
+                    L"Concerned with beauty or the appreciation of beauty. In design, it refers to the visual aspects of a product that make it appealing and premium."
+                );
             }
             return 0;
         }

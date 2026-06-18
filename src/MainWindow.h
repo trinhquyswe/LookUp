@@ -7,6 +7,7 @@
 #include <strsafe.h>
 #include <string>
 #include "D2DRenderer.h"
+#include "PopupWindow.h"
 
 // Custom window messages
 #define WM_TRAYICON (WM_USER + 1)
@@ -71,4 +72,7 @@ private:
     // Interactive button hover states
     bool m_hoverToggle;
     bool m_hoverHotkey;
+
+    // Layered popup window helper
+    PopupWindow m_popupWindow;
 };

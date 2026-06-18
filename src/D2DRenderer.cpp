@@ -54,9 +54,14 @@ HRESULT D2DRenderer::CreateDeviceResources() {
             rc.bottom - rc.top
         );
 
-        // Create HWND Render Target
+        // Create HWND Render Target with alpha transparency support (PREMULTIPLIED)
+        D2D1_RENDER_TARGET_PROPERTIES rtProps = D2D1::RenderTargetProperties(
+            D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+        );
+
         hr = m_pD2DFactory->CreateHwndRenderTarget(
-            D2D1::RenderTargetProperties(),
+            rtProps,
             D2D1::HwndRenderTargetProperties(m_hwnd, size),
             &m_pRenderTarget
         );
