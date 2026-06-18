@@ -56,6 +56,7 @@ private:
     // Custom UI Rendering
     void RenderUI();
     std::wstring GetHotkeyString(bool useTemp = false) const;
+    void TriggerAsyncLookup();
 
 private:
     HWND m_hwnd;
@@ -75,4 +76,15 @@ private:
 
     // Layered popup window helper
     PopupWindow m_popupWindow;
+
+    // Low-level mouse hook thread management
+    HANDLE m_hHookThread;
+    DWORD m_hookThreadId;
+
+    static HWND s_hwndMain;
+    static HHOOK s_hMouseHook;
+    static DWORD s_lastClickTime;
+
+    static LRESULT CALLBACK MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam);
+    static DWORD WINAPI MouseHookThreadProc(LPVOID lpParam);
 };

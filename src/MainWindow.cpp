@@ -4,7 +4,17 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
+#include <thread>
+#include "DictionaryClient.h"
+
 using json = nlohmann::json;
+
+#define WM_TRIGGER_LOOKUP (WM_USER + 2)
+#define WM_SHOW_POPUP     (WM_USER + 3)
+
+HWND MainWindow::s_hwndMain = nullptr;
+HHOOK MainWindow::s_hMouseHook = nullptr;
+DWORD MainWindow::s_lastClickTime = 0;
 
 MainWindow::MainWindow() :
     m_hwnd(nullptr),
@@ -14,11 +24,19 @@ MainWindow::MainWindow() :
     m_isRecording(false),
     m_tempHotkey({}),
     m_hoverToggle(false),
-    m_hoverHotkey(false) {
+    m_hoverHotkey(false),
+    m_hHookThread(nullptr),
+    m_hookThreadId(0) {
 }
 
 MainWindow::~MainWindow() {
     RemoveTrayIcon();
+    if (m_hHookThread) {
+        PostThreadMessageW(m_hookThreadId, WM_QUIT, 0, 0);
+        WaitForSingleObject(m_hHookThread, 1000);
+        CloseHandle(m_hHookThread);
+        m_hHookThread = nullptr;
+    }
     if (m_hwnd) {
         UnregisterHotKey(m_hwnd, 1);
     }
@@ -192,6 +210,10 @@ LRESULT MainWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
             
             // Initialize popup window
             m_popupWindow.Create(GetModuleHandle(nullptr), m_hwnd);
+
+            // Spawn low-level mouse hook thread
+            s_hwndMain = m_hwnd;
+            m_hHookThread = CreateThread(nullptr, 0, MouseHookThreadProc, m_hwnd, 0, &m_hookThreadId);
             return 0;
         }
         case WM_SIZE: {
@@ -310,11 +332,21 @@ LRESULT MainWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_HOTKEY: {
             if (wParam == 1) {
-                m_popupWindow.Show(
-                    L"Aesthetic",
-                    L"/esˈθet.ɪk/",
-                    L"Concerned with beauty or the appreciation of beauty. In design, it refers to the visual aspects of a product that make it appealing and premium."
-                );
+                TriggerAsyncLookup();
+            }
+            return 0;
+        }
+        case WM_TRIGGER_LOOKUP: {
+            if (m_settings.middleClickTrigger) {
+                TriggerAsyncLookup();
+            }
+            return 0;
+        }
+        case WM_SHOW_POPUP: {
+            DictionaryEntry* pEntry = reinterpret_cast<DictionaryEntry*>(wParam);
+            if (pEntry) {
+                m_popupWindow.Show(pEntry->word, pEntry->phonetic, pEntry->definition, pEntry->audioUrl);
+                delete pEntry;
             }
             return 0;
         }
@@ -642,4 +674,86 @@ std::wstring MainWindow::GetHotkeyString(bool useTemp) const {
         }
     }
     return str;
+}
+
+void MainWindow::TriggerAsyncLookup() {
+    std::wstring word = L"Lookup"; // default fallback
+
+    // Try to get highlighting/copied word from clipboard
+    if (OpenClipboard(m_hwnd)) {
+        HANDLE hData = GetClipboardData(CF_UNICODETEXT);
+        if (hData) {
+            wchar_t* pText = static_cast<wchar_t*>(GlobalLock(hData));
+            if (pText) {
+                word = pText;
+                
+                // Trim leading/trailing spaces
+                while (!word.empty() && iswspace(word.front())) word.erase(0, 1);
+                while (!word.empty() && iswspace(word.back())) word.pop_back();
+
+                // Select first word if multiple
+                size_t firstSpace = word.find(L' ');
+                if (firstSpace != std::wstring::npos) {
+                    word = word.substr(0, firstSpace);
+                }
+
+                // Trim punctuation symbols
+                while (!word.empty() && iswpunct(word.front())) word.erase(0, 1);
+                while (!word.empty() && iswpunct(word.back())) word.pop_back();
+
+                GlobalUnlock(hData);
+            }
+        }
+        CloseClipboard();
+    }
+
+    if (word.empty()) word = L"Lookup";
+
+    // Run query asynchronously on a worker thread
+    std::thread([this, word]() {
+        DictionaryEntry entry;
+        if (DictionaryClient::Lookup(word, entry)) {
+            DictionaryEntry* pEntry = new DictionaryEntry(entry);
+            PostMessageW(m_hwnd, WM_SHOW_POPUP, reinterpret_cast<WPARAM>(pEntry), 0);
+        } else {
+            std::wstring failMsg = L"Definition not found in database for the word \"" + word + L"\".";
+            DictionaryEntry* pEntry = new DictionaryEntry{ word, L"", failMsg, L"" };
+            PostMessageW(m_hwnd, WM_SHOW_POPUP, reinterpret_cast<WPARAM>(pEntry), 0);
+        }
+    }).detach();
+}
+
+LRESULT CALLBACK MainWindow::MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode >= 0) {
+        if (wParam == WM_MBUTTONDOWN) {
+            DWORD currentTime = GetTickCount();
+            // Detect manual double-click interval
+            if (currentTime - s_lastClickTime <= GetDoubleClickTime()) {
+                PostMessageW(s_hwndMain, WM_TRIGGER_LOOKUP, 0, 0);
+            }
+            s_lastClickTime = currentTime;
+        }
+    }
+    return CallNextHookEx(nullptr, nCode, wParam, lParam);
+}
+
+DWORD WINAPI MainWindow::MouseHookThreadProc(LPVOID lpParam) {
+    HWND hwndMain = reinterpret_cast<HWND>(lpParam);
+    s_hwndMain = hwndMain;
+
+    s_hMouseHook = SetWindowsHookExW(WH_MOUSE_LL, MouseHookProc, GetModuleHandle(nullptr), 0);
+    if (!s_hMouseHook) {
+        return 0;
+    }
+
+    // Worker thread message pump keeping hook alive
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+
+    UnhookWindowsHookEx(s_hMouseHook);
+    s_hMouseHook = nullptr;
+    return 0;
 }

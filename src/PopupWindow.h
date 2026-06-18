@@ -18,7 +18,7 @@ public:
     bool Create(HINSTANCE hInstance, HWND hwndParent);
     
     // Shows the pop-up dictionary card at cursor coordinates
-    void Show(const std::wstring& word, const std::wstring& phonetic, const std::wstring& definition);
+    void Show(const std::wstring& word, const std::wstring& phonetic, const std::wstring& definition, const std::wstring& audioUrl = L"");
     
     // Hides the popup immediately
     void Hide();
@@ -66,4 +66,7 @@ private:
     bool m_hoverListen;
     bool m_hoverCopy;
     bool m_hoverClose;
+
+    // Pronunciation audio
+    std::wstring m_audioUrl;
 };

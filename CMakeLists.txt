@@ -24,6 +24,8 @@ add_executable(LookUp WIN32
     src/MainWindow.cpp
     src/PopupWindow.h
     src/PopupWindow.cpp
+    src/DictionaryClient.h
+    src/DictionaryClient.cpp
 )
 
 # Include directories
@@ -42,6 +44,7 @@ target_link_libraries(LookUp PRIVATE
     gdi32
     ole32
     dwmapi
+    runtimeobject
 )
 
 # Copy Assets to output directory post-build

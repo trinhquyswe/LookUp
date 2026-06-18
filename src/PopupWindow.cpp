@@ -2,6 +2,11 @@
 #include <cmath>
 #include <windowsx.h>
 
+// C++/WinRT audio projection headers
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Media.Playback.h>
+#include <winrt/Windows.Media.Core.h>
+
 PopupWindow::PopupWindow() :
     m_hwnd(nullptr),
     m_hwndParent(nullptr),
@@ -72,10 +77,11 @@ bool PopupWindow::Create(HINSTANCE hInstance, HWND hwndParent) {
     return true;
 }
 
-void PopupWindow::Show(const std::wstring& word, const std::wstring& phonetic, const std::wstring& definition) {
+void PopupWindow::Show(const std::wstring& word, const std::wstring& phonetic, const std::wstring& definition, const std::wstring& audioUrl) {
     m_word = word;
     m_phonetic = phonetic;
     m_definition = definition;
+    m_audioUrl = audioUrl;
 
     // Reset animation state
     m_animationTime = 0.0;
@@ -252,8 +258,22 @@ LRESULT PopupWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
                 }
             }
             else if (m_hoverListen) {
-                // Play audio logic will be wired in Phase 5
-                // For now, flash button feedback
+                if (!m_audioUrl.empty()) {
+                    static winrt::Windows::Media::Playback::MediaPlayer mediaPlayer = nullptr;
+                    try {
+                        winrt::Windows::Foundation::Uri uri(m_audioUrl);
+                        winrt::Windows::Media::Core::MediaSource source = 
+                            winrt::Windows::Media::Core::MediaSource::CreateFromUri(uri);
+                        
+                        if (!mediaPlayer) {
+                            mediaPlayer = winrt::Windows::Media::Playback::MediaPlayer();
+                        }
+                        mediaPlayer.Source(source);
+                        mediaPlayer.Play();
+                    } catch (...) {
+                        // Playback error
+                    }
+                }
                 InvalidateRect(m_hwnd, nullptr, FALSE);
             }
             return 0;
