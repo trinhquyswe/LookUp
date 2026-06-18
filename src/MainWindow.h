@@ -57,6 +57,7 @@ private:
     void RenderUI();
     std::wstring GetHotkeyString(bool useTemp = false) const;
     void TriggerAsyncLookup();
+    std::wstring CaptureAndOcrWord();
 
 private:
     HWND m_hwnd;

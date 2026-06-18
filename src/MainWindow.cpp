@@ -7,6 +7,14 @@
 #include <thread>
 #include "DictionaryClient.h"
 
+// C++/WinRT OCR and Imaging headers
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Graphics.Imaging.h>
+#include <winrt/Windows.Media.Ocr.h>
+#include <winrt/Windows.Storage.Streams.h>
+#include <winrt/Windows.Globalization.h>
+
 using json = nlohmann::json;
 
 #define WM_TRIGGER_LOOKUP (WM_USER + 2)
@@ -677,34 +685,37 @@ std::wstring MainWindow::GetHotkeyString(bool useTemp) const {
 }
 
 void MainWindow::TriggerAsyncLookup() {
-    std::wstring word = L"Lookup"; // default fallback
+    // 1. Try OCR under cursor
+    std::wstring word = CaptureAndOcrWord();
 
-    // Try to get highlighting/copied word from clipboard
-    if (OpenClipboard(m_hwnd)) {
-        HANDLE hData = GetClipboardData(CF_UNICODETEXT);
-        if (hData) {
-            wchar_t* pText = static_cast<wchar_t*>(GlobalLock(hData));
-            if (pText) {
-                word = pText;
-                
-                // Trim leading/trailing spaces
-                while (!word.empty() && iswspace(word.front())) word.erase(0, 1);
-                while (!word.empty() && iswspace(word.back())) word.pop_back();
+    // 2. Fallback to clipboard if OCR yields no text
+    if (word.empty()) {
+        if (OpenClipboard(m_hwnd)) {
+            HANDLE hData = GetClipboardData(CF_UNICODETEXT);
+            if (hData) {
+                wchar_t* pText = static_cast<wchar_t*>(GlobalLock(hData));
+                if (pText) {
+                    word = pText;
+                    
+                    // Trim leading/trailing spaces
+                    while (!word.empty() && iswspace(word.front())) word.erase(0, 1);
+                    while (!word.empty() && iswspace(word.back())) word.pop_back();
 
-                // Select first word if multiple
-                size_t firstSpace = word.find(L' ');
-                if (firstSpace != std::wstring::npos) {
-                    word = word.substr(0, firstSpace);
+                    // Select first word if multiple
+                    size_t firstSpace = word.find(L' ');
+                    if (firstSpace != std::wstring::npos) {
+                        word = word.substr(0, firstSpace);
+                    }
+
+                    // Trim punctuation symbols
+                    while (!word.empty() && iswpunct(word.front())) word.erase(0, 1);
+                    while (!word.empty() && iswpunct(word.back())) word.pop_back();
+
+                    GlobalUnlock(hData);
                 }
-
-                // Trim punctuation symbols
-                while (!word.empty() && iswpunct(word.front())) word.erase(0, 1);
-                while (!word.empty() && iswpunct(word.back())) word.pop_back();
-
-                GlobalUnlock(hData);
             }
+            CloseClipboard();
         }
-        CloseClipboard();
     }
 
     if (word.empty()) word = L"Lookup";
@@ -721,6 +732,115 @@ void MainWindow::TriggerAsyncLookup() {
             PostMessageW(m_hwnd, WM_SHOW_POPUP, reinterpret_cast<WPARAM>(pEntry), 0);
         }
     }).detach();
+}
+
+static std::wstring FindClosestWord(const winrt::Windows::Media::Ocr::OcrResult& result, double centerX, double centerY) {
+    std::wstring closestWord = L"";
+    double minDistance = 1e9;
+
+    for (const auto& line : result.Lines()) {
+        for (const auto& word : line.Words()) {
+            auto rect = word.BoundingRect();
+
+            // Direct check if center coordinates fall inside bounds
+            if (centerX >= rect.X && centerX <= (rect.X + rect.Width) &&
+                centerY >= rect.Y && centerY <= (rect.Y + rect.Height)) {
+                return std::wstring(word.Text().c_str());
+            }
+
+            double wCenterX = rect.X + (rect.Width / 2.0);
+            double wCenterY = rect.Y + (rect.Height / 2.0);
+            double dist = sqrt(pow(wCenterX - centerX, 2) + pow(wCenterY - centerY, 2));
+            if (dist < minDistance) {
+                minDistance = dist;
+                closestWord = word.Text().c_str();
+            }
+        }
+    }
+    return closestWord;
+}
+
+std::wstring MainWindow::CaptureAndOcrWord() {
+    POINT pt;
+    if (!GetPhysicalCursorPos(&pt)) {
+        GetCursorPos(&pt);
+    }
+
+    // Capture region size centered at cursor (in physical pixels)
+    int captureW = 300;
+    int captureH = 80;
+    int x = pt.x - (captureW / 2);
+    int y = pt.y - (captureH / 2);
+
+    HDC hdcScreen = GetDC(nullptr);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, captureW, captureH);
+    HGDIOBJ hOld = SelectObject(hdcMem, hBitmap);
+
+    BitBlt(hdcMem, 0, 0, captureW, captureH, hdcScreen, x, y, SRCCOPY);
+
+    BITMAPINFOHEADER bi = { 0 };
+    bi.biSize = sizeof(BITMAPINFOHEADER);
+    bi.biWidth = captureW;
+    bi.biHeight = -captureH; // top-down
+    bi.biPlanes = 1;
+    bi.biBitCount = 32;
+    bi.biCompression = BI_RGB;
+
+    std::vector<BYTE> pixels(captureW * captureH * 4);
+    GetDIBits(hdcScreen, hBitmap, 0, captureH, pixels.data(), reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS);
+
+    SelectObject(hdcMem, hOld);
+    DeleteObject(hBitmap);
+    DeleteDC(hdcMem);
+    ReleaseDC(nullptr, hdcScreen);
+
+    try {
+        // Wrap pixels in SoftwareBitmap using encoder/decoder stream
+        winrt::Windows::Storage::Streams::InMemoryRandomAccessStream stream;
+        winrt::Windows::Graphics::Imaging::BitmapEncoder encoder = 
+            winrt::Windows::Graphics::Imaging::BitmapEncoder::CreateAsync(
+                winrt::Windows::Graphics::Imaging::BitmapEncoder::PngEncoderId(), stream).get();
+        
+        // Pass standard WIC copy
+        std::vector<uint8_t> pixelData(pixels.begin(), pixels.end());
+        encoder.SetPixelData(
+            winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
+            winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Ignore,
+            static_cast<uint32_t>(captureW),
+            static_cast<uint32_t>(captureH),
+            96.0, 96.0,
+            pixelData
+        );
+        encoder.FlushAsync().get();
+
+        winrt::Windows::Graphics::Imaging::BitmapDecoder decoder = 
+            winrt::Windows::Graphics::Imaging::BitmapDecoder::CreateAsync(stream).get();
+        winrt::Windows::Graphics::Imaging::SoftwareBitmap softwareBitmap = 
+            decoder.GetSoftwareBitmapAsync().get();
+
+        // Perform OCR using built-in Windows OCR engine
+        winrt::Windows::Media::Ocr::OcrEngine ocrEngine = 
+            winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages();
+        
+        if (!ocrEngine) {
+            winrt::Windows::Globalization::Language lang(L"en-US");
+            ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromLanguage(lang);
+        }
+
+        if (ocrEngine) {
+            winrt::Windows::Media::Ocr::OcrResult result = ocrEngine.RecognizeAsync(softwareBitmap).get();
+            if (result) {
+                double centerX = captureW / 2.0;
+                double centerY = captureH / 2.0;
+                return FindClosestWord(result, centerX, centerY);
+            }
+        }
+    } catch (...) {
+        // OCR failed
+    }
+
+    return L"";
 }
 
 LRESULT CALLBACK MainWindow::MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
