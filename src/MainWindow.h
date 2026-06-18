@@ -64,6 +64,7 @@ private:
     NOTIFYICONDATAW m_nid;
     bool m_isVisible;
     D2DRenderer* m_pRenderer;
+    void* m_ocrHandle;
     std::wstring m_settingsPath;
 
     // Settings and recording state

@@ -3,22 +3,100 @@
 #include <knownfolders.h>
 #include <fstream>
 #include <nlohmann/json.hpp>
-
 #include <thread>
+#include <sstream>
+#include <cmath>
+#include <algorithm>
 #include "DictionaryClient.h"
-
-// C++/WinRT OCR and Imaging headers
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.Foundation.Collections.h>
-#include <winrt/Windows.Graphics.Imaging.h>
-#include <winrt/Windows.Media.Ocr.h>
-#include <winrt/Windows.Storage.Streams.h>
-#include <winrt/Windows.Globalization.h>
+#include "OcrLiteCApi.h"
 
 using json = nlohmann::json;
 
 #define WM_TRIGGER_LOOKUP (WM_USER + 2)
 #define WM_SHOW_POPUP     (WM_USER + 3)
+
+static std::string WideToUtf8(const std::wstring& wstr) {
+    if (wstr.empty()) return "";
+    int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string str(sizeNeeded - 1, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &str[0], sizeNeeded, nullptr, nullptr);
+    return str;
+}
+
+static std::wstring Utf8ToWide(const std::string& str) {
+    if (str.empty()) return L"";
+    int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+    std::wstring wstr(sizeNeeded - 1, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], sizeNeeded);
+    return wstr;
+}
+
+static std::wstring ParseClosestWord(const std::wstring& ocrText) {
+    if (ocrText.empty()) return L"";
+
+    // Split into lines
+    std::vector<std::wstring> lines;
+    std::wstring line;
+    std::wistringstream iss(ocrText);
+    while (std::getline(iss, line, L'\n')) {
+        if (!line.empty()) {
+            lines.push_back(line);
+        }
+    }
+
+    if (lines.empty()) return L"";
+
+    // Get line closest to the vertical center
+    std::wstring centerLine = lines[lines.size() / 2];
+
+    // Find the word closest to the horizontal center of centerLine
+    struct WordSpan {
+        std::wstring text;
+        size_t start;
+        size_t end;
+    };
+
+    std::vector<WordSpan> words;
+    std::wstring currentWord;
+    size_t startIdx = 0;
+
+    for (size_t i = 0; i <= centerLine.length(); ++i) {
+        wchar_t ch = (i < centerLine.length()) ? centerLine[i] : L'\0';
+        if (iswalnum(ch) || ch == L'\'' || ch == L'-') {
+            if (currentWord.empty()) {
+                startIdx = i;
+            }
+            currentWord += ch;
+        } else {
+            if (!currentWord.empty()) {
+                words.push_back({ currentWord, startIdx, i });
+                currentWord.clear();
+            }
+        }
+    }
+
+    if (words.empty()) return L"";
+
+    double lineMiddle = centerLine.length() / 2.0;
+    double minDistance = 1e9;
+    std::wstring closestWord;
+
+    for (const auto& w : words) {
+        if (lineMiddle >= w.start && lineMiddle <= w.end) {
+            return w.text;
+        }
+
+        double wordCenter = w.start + (w.end - w.start) / 2.0;
+        double dist = std::abs(wordCenter - lineMiddle);
+        if (dist < minDistance) {
+            minDistance = dist;
+            closestWord = w.text;
+        }
+    }
+
+    return closestWord;
+}
+
 
 HWND MainWindow::s_hwndMain = nullptr;
 HHOOK MainWindow::s_hMouseHook = nullptr;
@@ -29,6 +107,7 @@ MainWindow::MainWindow() :
     m_nid({}),
     m_isVisible(true),
     m_pRenderer(nullptr),
+    m_ocrHandle(nullptr),
     m_isRecording(false),
     m_tempHotkey({}),
     m_hoverToggle(false),
@@ -51,6 +130,10 @@ MainWindow::~MainWindow() {
     if (m_pRenderer) {
         delete m_pRenderer;
         m_pRenderer = nullptr;
+    }
+    if (m_ocrHandle) {
+        OcrDestroy(reinterpret_cast<OCR_HANDLE>(m_ocrHandle));
+        m_ocrHandle = nullptr;
     }
 }
 
@@ -199,7 +282,7 @@ LRESULT MainWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
                 return -1; // Fail window creation
             }
             
-            // Set up relative assets font load
+            // Set up relative assets font load and OCR initialization
             wchar_t exePath[MAX_PATH];
             if (GetModuleFileNameW(nullptr, exePath, MAX_PATH)) {
                 wchar_t* lastSlash = wcsrchr(exePath, L'\\');
@@ -211,6 +294,27 @@ LRESULT MainWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
                 
                 // Load font file into local process font table
                 D2DRenderer::LoadPrivateFont(fontPath);
+
+                // Construct absolute paths for OCR models
+                wchar_t detPath[MAX_PATH];
+                wchar_t clsPath[MAX_PATH];
+                wchar_t recPath[MAX_PATH];
+                wchar_t keyPath[MAX_PATH];
+                
+                StringCchPrintfW(detPath, MAX_PATH, L"%s\\assets\\models\\ch_PP-OCRv3_det_infer.onnx", exePath);
+                StringCchPrintfW(clsPath, MAX_PATH, L"%s\\assets\\models\\ch_ppocr_mobile_v2.0_cls_infer.onnx", exePath);
+                StringCchPrintfW(recPath, MAX_PATH, L"%s\\assets\\models\\ch_PP-OCRv3_rec_infer.onnx", exePath);
+                StringCchPrintfW(keyPath, MAX_PATH, L"%s\\assets\\models\\ppocr_keys_v1.txt", exePath);
+
+                std::string detStr = WideToUtf8(detPath);
+                std::string clsStr = WideToUtf8(clsPath);
+                std::string recStr = WideToUtf8(recPath);
+                std::string keyStr = WideToUtf8(keyPath);
+
+                m_ocrHandle = OcrInit(detStr.c_str(), clsStr.c_str(), recStr.c_str(), keyStr.c_str(), 4);
+                if (!m_ocrHandle) {
+                    MessageBoxW(m_hwnd, L"Failed to initialize RapidOCR engine. Please verify that the assets folder and ONNX models exist.", L"Error", MB_ICONERROR);
+                }
             }
 
             SetupTrayIcon();
@@ -734,33 +838,9 @@ void MainWindow::TriggerAsyncLookup() {
     }).detach();
 }
 
-static std::wstring FindClosestWord(const winrt::Windows::Media::Ocr::OcrResult& result, double centerX, double centerY) {
-    std::wstring closestWord = L"";
-    double minDistance = 1e9;
-
-    for (const auto& line : result.Lines()) {
-        for (const auto& word : line.Words()) {
-            auto rect = word.BoundingRect();
-
-            // Direct check if center coordinates fall inside bounds
-            if (centerX >= rect.X && centerX <= (rect.X + rect.Width) &&
-                centerY >= rect.Y && centerY <= (rect.Y + rect.Height)) {
-                return std::wstring(word.Text().c_str());
-            }
-
-            double wCenterX = rect.X + (rect.Width / 2.0);
-            double wCenterY = rect.Y + (rect.Height / 2.0);
-            double dist = sqrt(pow(wCenterX - centerX, 2) + pow(wCenterY - centerY, 2));
-            if (dist < minDistance) {
-                minDistance = dist;
-                closestWord = word.Text().c_str();
-            }
-        }
-    }
-    return closestWord;
-}
-
 std::wstring MainWindow::CaptureAndOcrWord() {
+    if (!m_ocrHandle) return L"";
+
     POINT pt;
     if (!GetPhysicalCursorPos(&pt)) {
         GetCursorPos(&pt);
@@ -795,49 +875,56 @@ std::wstring MainWindow::CaptureAndOcrWord() {
     DeleteDC(hdcMem);
     ReleaseDC(nullptr, hdcScreen);
 
-    try {
-        // Wrap pixels in SoftwareBitmap using encoder/decoder stream
-        winrt::Windows::Storage::Streams::InMemoryRandomAccessStream stream;
-        winrt::Windows::Graphics::Imaging::BitmapEncoder encoder = 
-            winrt::Windows::Graphics::Imaging::BitmapEncoder::CreateAsync(
-                winrt::Windows::Graphics::Imaging::BitmapEncoder::PngEncoderId(), stream).get();
-        
-        // Pass standard WIC copy
-        std::vector<uint8_t> pixelData(pixels.begin(), pixels.end());
-        encoder.SetPixelData(
-            winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
-            winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Ignore,
-            static_cast<uint32_t>(captureW),
-            static_cast<uint32_t>(captureH),
-            96.0, 96.0,
-            pixelData
-        );
-        encoder.FlushAsync().get();
+    // Save pixels as BMP file
+    wchar_t tempPath[MAX_PATH];
+    GetTempPathW(MAX_PATH, tempPath);
+    wchar_t bmpFile[MAX_PATH];
+    StringCchPrintfW(bmpFile, MAX_PATH, L"%slookup_ocr.bmp", tempPath);
 
-        winrt::Windows::Graphics::Imaging::BitmapDecoder decoder = 
-            winrt::Windows::Graphics::Imaging::BitmapDecoder::CreateAsync(stream).get();
-        winrt::Windows::Graphics::Imaging::SoftwareBitmap softwareBitmap = 
-            decoder.GetSoftwareBitmapAsync().get();
+    BITMAPFILEHEADER bfh = { 0 };
+    bfh.bfType = 0x4D42; // "BM"
+    bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    bfh.bfSize = bfh.bfOffBits + (captureW * captureH * 4);
 
-        // Perform OCR using built-in Windows OCR engine
-        winrt::Windows::Media::Ocr::OcrEngine ocrEngine = 
-            winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages();
-        
-        if (!ocrEngine) {
-            winrt::Windows::Globalization::Language lang(L"en-US");
-            ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromLanguage(lang);
-        }
+    HANDLE hFile = CreateFileW(bmpFile, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        DWORD written;
+        WriteFile(hFile, &bfh, sizeof(bfh), &written, nullptr);
+        WriteFile(hFile, &bi, sizeof(bi), &written, nullptr);
+        WriteFile(hFile, pixels.data(), static_cast<DWORD>(pixels.size()), &written, nullptr);
+        CloseHandle(hFile);
+    } else {
+        return L"";
+    }
 
-        if (ocrEngine) {
-            winrt::Windows::Media::Ocr::OcrResult result = ocrEngine.RecognizeAsync(softwareBitmap).get();
-            if (result) {
-                double centerX = captureW / 2.0;
-                double centerY = captureH / 2.0;
-                return FindClosestWord(result, centerX, centerY);
+    // Call OCR engine
+    std::string imgPathUtf8 = WideToUtf8(tempPath);
+    std::string imgNameUtf8 = "lookup_ocr.bmp";
+
+    OCR_PARAM param;
+    param.padding = 50;
+    param.maxSideLen = 1024;
+    param.boxScoreThresh = 0.6f;
+    param.boxThresh = 0.3f;
+    param.unClipRatio = 2.0f;
+    param.doAngle = 1;
+    param.mostAngle = 1;
+
+    OCR_BOOL bRet = OcrDetect(reinterpret_cast<OCR_HANDLE>(m_ocrHandle), imgPathUtf8.c_str(), imgNameUtf8.c_str(), &param);
+    
+    // Delete temp BMP file to clean up
+    DeleteFileW(bmpFile);
+
+    if (bRet) {
+        int nLen = OcrGetLen(reinterpret_cast<OCR_HANDLE>(m_ocrHandle));
+        if (nLen > 0) {
+            std::vector<char> buf(nLen);
+            if (OcrGetResult(reinterpret_cast<OCR_HANDLE>(m_ocrHandle), buf.data(), nLen)) {
+                std::string resultStr(buf.data());
+                std::wstring wResultStr = Utf8ToWide(resultStr);
+                return ParseClosestWord(wResultStr);
             }
         }
-    } catch (...) {
-        // OCR failed
     }
 
     return L"";

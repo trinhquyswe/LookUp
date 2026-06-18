@@ -32,6 +32,7 @@ add_executable(LookUp WIN32
 target_include_directories(LookUp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/windows-clib/win-CLIB-CPU-x64/include
 )
 
 # Direct2D, DirectWrite, WinHTTP, and core Win32 libraries
@@ -45,6 +46,15 @@ target_link_libraries(LookUp PRIVATE
     ole32
     dwmapi
     runtimeobject
+    ${CMAKE_CURRENT_SOURCE_DIR}/windows-clib/win-CLIB-CPU-x64/lib/RapidOcrOnnx.lib
+)
+
+# Copy RapidOcrOnnx.dll to output directory post-build
+add_custom_command(TARGET LookUp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${CMAKE_CURRENT_SOURCE_DIR}/windows-clib/win-CLIB-CPU-x64/bin/RapidOcrOnnx.dll"
+        "$<TARGET_FILE_DIR:LookUp>/RapidOcrOnnx.dll"
+    COMMENT "Copying RapidOcrOnnx DLL to build output folder..."
 )
 
 # Copy Assets to output directory post-build
