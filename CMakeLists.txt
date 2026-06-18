@@ -20,6 +20,14 @@ add_executable(LookUp WIN32
     src/main.cpp
     src/D2DRenderer.h
     src/D2DRenderer.cpp
+    src/MainWindow.h
+    src/MainWindow.cpp
+)
+
+# Include directories
+target_include_directories(LookUp PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 # Direct2D, DirectWrite, WinHTTP, and core Win32 libraries
