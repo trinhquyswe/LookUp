@@ -18,6 +18,8 @@ add_compile_definitions(UNICODE _UNICODE)
 # Add source files
 add_executable(LookUp WIN32
     src/main.cpp
+    src/D2DRenderer.h
+    src/D2DRenderer.cpp
 )
 
 # Direct2D, DirectWrite, WinHTTP, and core Win32 libraries
@@ -29,4 +31,12 @@ target_link_libraries(LookUp PRIVATE
     user32
     gdi32
     ole32
+)
+
+# Copy Assets to output directory post-build
+add_custom_command(TARGET LookUp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:LookUp>/assets"
+    COMMENT "Copying project assets folder to build output folder..."
 )

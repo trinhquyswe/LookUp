@@ -11,6 +11,8 @@
 #include <strsafe.h>
 #include <objbase.h>
 
+#include "D2DRenderer.h"
+
 // Custom window messages
 #define WM_TRAYICON (WM_USER + 1)
 
@@ -23,11 +25,23 @@
 const wchar_t CLASS_NAME[] = L"LookUpMainWindowClass";
 const wchar_t WINDOW_TITLE[] = L"LookUp - Dashboard";
 
-// Structure to hold Application State (will grow in subsequent phases)
+// Structure to hold Application State
 struct AppState {
     HWND hwndMain = nullptr;
     NOTIFYICONDATAW nid = {};
     bool isVisible = true;
+    D2DRenderer* renderer = nullptr;
+    wchar_t loadedFontPath[MAX_PATH] = {};
+
+    ~AppState() {
+        if (renderer) {
+            delete renderer;
+            renderer = nullptr;
+        }
+        if (loadedFontPath[0] != L'\0') {
+            D2DRenderer::UnloadPrivateFont(loadedFontPath);
+        }
+    }
 };
 
 // Function prototypes
@@ -55,7 +69,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
     wc.lpszClassName = CLASS_NAME;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION); // Will use custom icon in later phases
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = nullptr; // Set to nullptr to avoid Win32 window background flicker
 
     if (!RegisterClassExW(&wc)) {
         MessageBoxW(nullptr, L"Failed to register window class.", L"LookUp Error", MB_OK | MB_ICONERROR);
@@ -63,8 +77,24 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         return 1;
     }
 
-    // Allocate AppState on heap to associate with HWND
+    // Allocate AppState on heap
     AppState* state = new AppState();
+
+    // Determine font path relative to the executable
+    wchar_t exePath[MAX_PATH];
+    if (GetModuleFileNameW(nullptr, exePath, MAX_PATH)) {
+        wchar_t* lastSlash = wcsrchr(exePath, L'\\');
+        if (lastSlash) {
+            *lastSlash = L'\0';
+        }
+        StringCchPrintfW(state->loadedFontPath, MAX_PATH, L"%s\\assets\\fonts\\Inter.ttf", exePath);
+        
+        // Load custom font (adds to process-local system font table)
+        if (!D2DRenderer::LoadPrivateFont(state->loadedFontPath)) {
+            // If local copy fails, log warning. DirectWrite will fallback to Segoe UI
+            state->loadedFontPath[0] = L'\0'; 
+        }
+    }
 
     // Define window size and center it
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -85,7 +115,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         nullptr,                        // Parent window    
         nullptr,                        // Menu
         hInstance,                      // Instance handle
-        state                           // Additional application data
+        state                           // Pass state to WM_NCCREATE
     );
 
     if (hwnd == nullptr) {
@@ -125,22 +155,137 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         }
         case WM_CREATE: {
             if (state) {
+                // Initialize Direct2D Renderer
+                state->renderer = new D2DRenderer();
+                if (FAILED(state->renderer->Initialize(hwnd))) {
+                    delete state->renderer;
+                    state->renderer = nullptr;
+                    return -1; // Fails window creation
+                }
                 SetupTrayIcon(hwnd, state);
             }
             return 0;
         }
+        case WM_SIZE: {
+            UINT width = LOWORD(lParam);
+            UINT height = HIWORD(lParam);
+            if (state && state->renderer) {
+                state->renderer->Resize(width, height);
+            }
+            return 0;
+        }
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            BeginPaint(hwnd, &ps);
+
+            if (state && state->renderer) {
+                if (SUCCEEDED(state->renderer->BeginDraw())) {
+                    ID2D1HwndRenderTarget* rt = state->renderer->GetRenderTarget();
+                    RECT rc;
+                    GetClientRect(hwnd, &rc);
+
+                    FLOAT width = static_cast<FLOAT>(rc.right - rc.left);
+                    FLOAT height = static_cast<FLOAT>(rc.bottom - rc.top);
+
+                    // 1. Create a beautiful gradient brush for the background
+                    ID2D1LinearGradientBrush* pGradientBrush = nullptr;
+                    ID2D1GradientStopCollection* pStops = nullptr;
+                    D2D1_GRADIENT_STOP stops[2];
+                    stops[0].color = D2D1::ColorF(0.05f, 0.06f, 0.12f, 1.0f); // Very dark indigo
+                    stops[0].position = 0.0f;
+                    stops[1].color = D2D1::ColorF(0.12f, 0.14f, 0.28f, 1.0f); // Sleek medium blue
+                    stops[1].position = 1.0f;
+
+                    HRESULT hr = rt->CreateGradientStopCollection(
+                        stops, 
+                        2, 
+                        D2D1_GAMMA_2_2, 
+                        D2D1_EXTEND_MODE_CLAMP, 
+                        &pStops
+                    );
+
+                    if (SUCCEEDED(hr)) {
+                        hr = rt->CreateLinearGradientBrush(
+                            D2D1::LinearGradientBrushProperties(
+                                D2D1::Point2F(0.0f, 0.0f),
+                                D2D1::Point2F(width, height)
+                            ),
+                            pStops,
+                            &pGradientBrush
+                        );
+                    }
+
+                    // Draw background gradient
+                    if (pGradientBrush) {
+                        rt->FillRectangle(D2D1::RectF(0.0f, 0.0f, width, height), pGradientBrush);
+                    } else {
+                        rt->Clear(D2D1::ColorF(0.07f, 0.08f, 0.14f, 1.0f));
+                    }
+
+                    // 2. Draw a subtle glowing inner border
+                    ID2D1SolidColorBrush* pGlowBrush = nullptr;
+                    rt->CreateSolidColorBrush(D2D1::ColorF(0.38f, 0.49f, 0.96f, 0.25f), &pGlowBrush);
+                    if (pGlowBrush) {
+                        rt->DrawRectangle(
+                            D2D1::RectF(10.0f, 10.0f, width - 10.0f, height - 10.0f), 
+                            pGlowBrush, 
+                            2.0f
+                        );
+                    }
+
+                    // 3. Draw premium text layout using "Inter" font
+                    IDWriteTextFormat* pTitleFormat = nullptr;
+                    hr = state->renderer->CreateTextFormat(
+                        L"Inter",
+                        32.0f,
+                        DWRITE_FONT_WEIGHT_BOLD,
+                        DWRITE_FONT_STYLE_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        &pTitleFormat
+                    );
+
+                    if (SUCCEEDED(hr)) {
+                        pTitleFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                        pTitleFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+                        ID2D1SolidColorBrush* pTextBrush = nullptr;
+                        rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &pTextBrush);
+
+                        if (pTextBrush) {
+                            const wchar_t text[] = L"LookUp\n\nDirect2D + DirectWrite (Inter Font)\nInitialized Successfully";
+                            D2D1_RECT_F textRect = D2D1::RectF(20.0f, 20.0f, width - 20.0f, height - 20.0f);
+                            rt->DrawTextW(
+                                text,
+                                ARRAYSIZE(text) - 1,
+                                pTitleFormat,
+                                textRect,
+                                pTextBrush
+                            );
+                            SafeRelease(&pTextBrush);
+                        }
+                        SafeRelease(&pTitleFormat);
+                    }
+
+                    // Clean up paint resources
+                    SafeRelease(&pGlowBrush);
+                    SafeRelease(&pGradientBrush);
+                    SafeRelease(&pStops);
+
+                    state->renderer->EndDraw();
+                }
+            }
+
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
         case WM_CLOSE: {
-            // Minimize or Hide to System Tray instead of destroying the window directly
             ShowWindow(hwnd, SW_HIDE);
             if (state) {
                 state->isVisible = false;
             }
-            return 0; // Prevent default window destruction
+            return 0;
         }
         case WM_DESTROY: {
-            if (state) {
-                RemoveTrayIcon(state);
-            }
             PostQuitMessage(0);
             return 0;
         }
@@ -164,7 +309,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         case WM_COMMAND: {
-            // Handle context menu command selections
             int wmId = LOWORD(wParam);
             switch (wmId) {
                 case ID_TRAY_SHOW: {
@@ -195,10 +339,8 @@ void SetupTrayIcon(HWND hwnd, AppState* state) {
     state->nid.uCallbackMessage = WM_TRAYICON;
     state->nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     
-    // Set Tooltip
     StringCchCopyW(state->nid.szTip, ARRAYSIZE(state->nid.szTip), L"LookUp - Native Dictionary");
     
-    // Set Balloon notifications for activation
     StringCchCopyW(state->nid.szInfoTitle, ARRAYSIZE(state->nid.szInfoTitle), L"LookUp Running");
     StringCchCopyW(state->nid.szInfo, ARRAYSIZE(state->nid.szInfo), L"LookUp is now active. Double-click the tray icon to open the dashboard.");
     state->nid.dwInfoFlags = NIIF_INFO;
@@ -220,10 +362,8 @@ void ShowContextMenu(HWND hwnd) {
         POINT pt;
         GetCursorPos(&pt);
 
-        // Required to ensure the menu behaves properly and closes when clicked outside
         SetForegroundWindow(hwnd);
 
-        // TrackPopupMenu blocks until an item is selected or the menu is dismissed
         TrackPopupMenu(
             hMenu,
             TPM_RIGHTBUTTON | TPM_LEFTALIGN,
